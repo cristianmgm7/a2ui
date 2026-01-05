@@ -1,0 +1,15 @@
+{
+  "name": "qa_agent",
+  "description": "A helpful assistant that can answer questions and have conversations.",
+  "version": "1.0.0",
+  "capabilities": {
+    "streaming": true,
+    "a2ui": true
+  },
+  "endpoints": {
+    "message": "http://localhost:8000/qa_agent/message",
+    "stream": "http://localhost:8000/qa_agent/stream"
+  },
+  "supportedProtocols": ["a2a", "a2ui"]
+}
+
