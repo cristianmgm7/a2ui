@@ -1,44 +1,38 @@
+// Copyright 2025 The Flutter Authors.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:genui/genui.dart' as genui;
+import 'package:genui/genui.dart';
 import 'package:genui_a2ui/genui_a2ui.dart';
 import 'package:logging/logging.dart';
 
-// Simple chat message model for backward compatibility
-class ChatMessage {
-  final String text;
-  final bool isUser;
-  final DateTime timestamp;
-
-  ChatMessage({required this.text, required this.isUser, DateTime? timestamp})
-      : timestamp = timestamp ?? DateTime.now();
-}
-
 void main() {
-  // Initialize logging for GenUI
-  Logger.root.level = Level.ALL;
-  Logger.root.onRecord.listen((record) {
-    print('${record.level.name}: ${record.time}: ${record.message}');
-  });
-
+  WidgetsFlutterBinding.ensureInitialized();
+  configureGenUiLogging(level: Level.ALL);
   runApp(const GenUIExampleApp());
 }
 
+/// The main application widget.
 class GenUIExampleApp extends StatelessWidget {
+  /// Creates a [GenUIExampleApp].
   const GenUIExampleApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'A2UI Example',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-      ),
+      theme: ThemeData(primarySwatch: Colors.deepPurple),
       home: const ChatScreen(),
     );
   }
 }
 
+/// The main chat screen.
 class ChatScreen extends StatefulWidget {
+  /// Creates a [ChatScreen].
   const ChatScreen({super.key});
 
   @override
@@ -47,129 +41,170 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _textController = TextEditingController();
-  final List<ChatMessage> _messages = [];
-
-  // Agent server configuration
-  // For development: try different addresses based on platform
-  // iOS Simulator: use 127.0.0.1 (special loopback to host)
-  // Android Emulator: use 10.0.2.2
-  // Physical devices: use host machine IP (192.168.1.33)
-  static const String _agentServerHost = '127.0.0.1';
-  static const int _agentServerPort = 8000;
-
-  // GenUI components
-  late genui.GenUiConversation _conversation;
-  late A2uiContentGenerator _contentGenerator;
-  late genui.A2uiMessageProcessor _messageProcessor;
+  final A2uiMessageProcessor _a2uiMessageProcessor = A2uiMessageProcessor(
+    catalogs: [CoreCatalogItems.asCatalog()],
+  );
+  late final A2uiContentGenerator _contentGenerator;
+  late final GenUiConversation _genUiConversation;
+  final List<String> _surfaceIds = ['default'];
+  int _currentSurfaceIndex = 0;
+  StreamSubscription<GenUiUpdate>? _surfaceSubscription;
 
   @override
   void initState() {
     super.initState();
-
-    // Initialize GenUI content generator pointing to the Python agent
-    // For testing: try localhost first, then fall back to network IP
     _contentGenerator = A2uiContentGenerator(
-      serverUrl: Uri.parse('http://localhost:$_agentServerPort'),
+      // Replace this with the address of the A2A server (one that supports the
+      // A2UI extension) that you wish to connect to.
+      serverUrl: Uri.parse('http://localhost:8000'),
     );
-
-    // Create the message processor with core catalog
-    _messageProcessor = genui.A2uiMessageProcessor(
-      catalogs: [genui.CoreCatalogItems.asCatalog()],
-    );
-
-    // Create the GenUI conversation
-    _conversation = genui.GenUiConversation(
+    _genUiConversation = GenUiConversation(
       contentGenerator: _contentGenerator,
-      a2uiMessageProcessor: _messageProcessor,
-      onTextResponse: (text) {
-        setState(() {
-          _messages.add(ChatMessage(text: text, isUser: false));
-        });
-      },
-      onError: (error) {
-        setState(() {
-          _messages.add(ChatMessage(
-            text: 'Error: ${error.error}',
-            isUser: false
-          ));
-        });
-      },
+      a2uiMessageProcessor: _a2uiMessageProcessor,
     );
+    // Initialize with existing surfaces
+    _surfaceIds.addAll(
+      _a2uiMessageProcessor.surfaces.keys.where(
+        (id) => !_surfaceIds.contains(id),
+      ),
+    );
+
+    _surfaceSubscription = _a2uiMessageProcessor.surfaceUpdates.listen((
+      update,
+    ) {
+      if (update is SurfaceAdded) {
+        genUiLogger.info('Surface added: ${update.surfaceId}');
+        if (!_surfaceIds.contains(update.surfaceId)) {
+          setState(() {
+            _surfaceIds.add(update.surfaceId);
+            // Switch to the new surface
+            _currentSurfaceIndex = _surfaceIds.length - 1;
+          });
+        }
+      } else if (update is SurfaceUpdated) {
+        genUiLogger.info('Surface updated: ${update.surfaceId}');
+        // The surface will redraw itself, but we call setState here to ensure
+        // that any other dependent widgets are also updated.
+        setState(() {});
+      } else if (update is SurfaceRemoved) {
+        genUiLogger.info('Surface removed: ${update.surfaceId}');
+        if (_surfaceIds.contains(update.surfaceId)) {
+          setState(() {
+            final int removeIndex = _surfaceIds.indexOf(update.surfaceId);
+            _surfaceIds.removeAt(removeIndex);
+            if (_surfaceIds.isEmpty) {
+              _currentSurfaceIndex = 0;
+            } else {
+              if (_currentSurfaceIndex >= removeIndex &&
+                  _currentSurfaceIndex > 0) {
+                _currentSurfaceIndex--;
+              }
+              if (_currentSurfaceIndex >= _surfaceIds.length) {
+                _currentSurfaceIndex = _surfaceIds.length - 1;
+              }
+            }
+          });
+        }
+      }
+    });
   }
 
   @override
   void dispose() {
     _textController.dispose();
-    _conversation.dispose();
+    _genUiConversation.dispose();
+    _surfaceSubscription?.cancel();
+    _a2uiMessageProcessor.dispose();
     _contentGenerator.dispose();
     super.dispose();
   }
 
   void _handleSubmitted(String text) {
-    if (text.trim().isEmpty) return;
-
     _textController.clear();
+    _genUiConversation.sendRequest(UserMessage.text(text));
+  }
 
-    final userMessage = genui.UserMessage.text(text);
+  void _previousSurface() {
+    if (_currentSurfaceIndex > 0) {
+      setState(() {
+        _currentSurfaceIndex--;
+      });
+    }
+  }
 
-    setState(() {
-      _messages.insert(0, ChatMessage(text: text, isUser: true));
-    });
-
-    // Send message through GenUI conversation
-    _conversation.sendRequest(userMessage);
+  void _nextSurface() {
+    if (_currentSurfaceIndex < _surfaceIds.length - 1) {
+      setState(() {
+        _currentSurfaceIndex++;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_surfaceIds.isEmpty) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('A2UI Example')),
+        body: const Center(child: Text('No surfaces available.')),
+      );
+    }
+    final String currentSurfaceId = _surfaceIds[_currentSurfaceIndex];
     return Scaffold(
       appBar: AppBar(
-        title: const Text('A2UI Example (Simplified)'),
-        backgroundColor: Colors.blue,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: _previousSurface,
+          tooltip: 'Previous Surface',
+          color: _currentSurfaceIndex > 0
+              ? null
+              : Theme.of(context).disabledColor,
+        ),
+        title: Text('Surface: $currentSurfaceId'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.arrow_forward),
+            onPressed: _nextSurface,
+            tooltip: 'Next Surface',
+            color: _currentSurfaceIndex < _surfaceIds.length - 1
+                ? null
+                : Theme.of(context).disabledColor,
+          ),
+        ],
       ),
-      body: Column(
+      body: Row(
         children: <Widget>[
-          // Status bar showing A2A integration status
-          Container(
-            padding: const EdgeInsets.all(8.0),
-            color: Colors.green.shade100,
-            child: const Row(
-              children: [
-                Icon(Icons.check_circle, color: Colors.green),
-                SizedBox(width: 8),
+          ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 200, maxWidth: 300),
+            child: Column(
+              children: <Widget>[
                 Expanded(
-                  child: Text(
-                    'A2A integration enabled. Connected to Python agent backend.',
-                    style: TextStyle(color: Colors.green, fontSize: 12),
+                  child: ValueListenableBuilder<List<ChatMessage>>(
+                    valueListenable: _genUiConversation.conversation,
+                    builder: (context, messages, child) {
+                      return ListView.builder(
+                        padding: const EdgeInsets.all(8.0),
+                        reverse: true,
+                        itemBuilder: (_, int index) =>
+                            _buildMessage(messages.reversed.toList()[index]),
+                        itemCount: messages.length,
+                      );
+                    },
                   ),
+                ),
+                const Divider(height: 1.0),
+                Container(
+                  decoration: BoxDecoration(color: Theme.of(context).cardColor),
+                  child: _buildTextComposer(),
                 ),
               ],
             ),
           ),
-          // Chat messages area
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(8.0),
-              reverse: true,
-              itemBuilder: (_, int index) => _buildMessage(_messages[index]),
-              itemCount: _messages.length,
-            ),
-          ),
-          const Divider(height: 1.0),
-          // Input area
-          Container(
-            decoration: BoxDecoration(color: Theme.of(context).cardColor),
-            child: _buildTextComposer(),
-          ),
-          // AI-generated UI area using GenUI
-          Container(
-            height: 300,
-            color: Colors.grey.shade50,
-            child: genui.GenUiSurface(
-              host: _messageProcessor,
-              surfaceId: 'main_surface',
-              defaultBuilder: (context) => const Center(
-                child: Text('Waiting for AI-generated UI...'),
+            child: SingleChildScrollView(
+              child: GenUiSurface(
+                key: ValueKey(currentSurfaceId),
+                host: _a2uiMessageProcessor,
+                surfaceId: currentSurfaceId,
               ),
             ),
           ),
@@ -179,6 +214,13 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildMessage(ChatMessage message) {
+    final isUserMessage = message is UserMessage;
+    var text = '';
+    if (message is UserMessage) {
+      text = message.text;
+    } else if (message is AiTextMessage) {
+      text = message.text;
+    }
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 10.0),
       child: Row(
@@ -186,22 +228,19 @@ class _ChatScreenState extends State<ChatScreen> {
         children: <Widget>[
           Container(
             margin: const EdgeInsets.only(right: 16.0),
-            child: CircleAvatar(
-              child: Text(message.isUser ? 'U' : 'A'),
-              backgroundColor: message.isUser ? Colors.blue : Colors.green,
-            ),
+            child: CircleAvatar(child: Text(isUserMessage ? 'U' : 'A')),
           ),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 Text(
-                  message.isUser ? 'User' : 'AI Assistant',
+                  isUserMessage ? 'User' : 'Agent',
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 Container(
                   margin: const EdgeInsets.only(top: 5.0),
-                  child: Text(message.text),
+                  child: Text(text),
                 ),
               ],
             ),
@@ -222,15 +261,17 @@ class _ChatScreenState extends State<ChatScreen> {
               child: TextField(
                 controller: _textController,
                 onSubmitted: _handleSubmitted,
-                decoration:
-                    const InputDecoration.collapsed(hintText: 'Send a message'),
+                decoration: const InputDecoration.collapsed(
+                  hintText: 'Send a message',
+                ),
               ),
             ),
             Container(
               margin: const EdgeInsets.symmetric(horizontal: 4.0),
               child: IconButton(
-                  icon: const Icon(Icons.send),
-                  onPressed: () => _handleSubmitted(_textController.text)),
+                icon: const Icon(Icons.send),
+                onPressed: () => _handleSubmitted(_textController.text),
+              ),
             ),
           ],
         ),

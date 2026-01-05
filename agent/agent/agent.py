@@ -1,12 +1,29 @@
 import os
 from dotenv import load_dotenv
 from google.adk.agents.llm_agent import Agent
+from google.adk.tools.mcp_tool import McpToolset
+from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams, StdioServerParameters
+from google.adk.auth import AuthCredential, AuthCredentialTypes, OAuth2Auth
+from fastapi.openapi.models import OAuth2, OAuthFlows, OAuthFlowAuthorizationCode
+from google.adk.tools.openapi_tool.openapi_spec_parser.openapi_toolset import OpenAPIToolset
 from google.adk.a2a.utils.agent_to_a2a import to_a2a
-from a2a.types import AgentCard, AgentSkill, AgentCapabilities
+from a2a.types import AgentCard, AgentSkill, AgentCapabilities  # pyright: ignore[reportMissingImports]
 from pathlib import Path
+import json
+import os
 
 # Load environment variables from .env file
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
+
+# Load OpenAPI specifications
+google_calendar_spec_path = Path(__file__).parent.parent.parent / "google_calendar_openapi.yaml"
+GOOGLE_CALENDAR_SPEC = None
+if google_calendar_spec_path.exists():
+    with open(google_calendar_spec_path, 'r') as f:
+        GOOGLE_CALENDAR_SPEC = f.read()
+    print("Loaded Google Calendar OpenAPI specification")
+else:
+    print("Warning: Google Calendar OpenAPI spec file not found")
 
 def load_instruction(filename: str) -> str:
     """Load agent instruction from a text file."""
@@ -27,28 +44,124 @@ github_agent = Agent(
     tools=[],  # Start simple, add tools later
 )
 
+# Create Carbon Voice agent with MCP tools
+carbon_voice_tools = []
+try:
+    carbon_voice_tools.append(
+        McpToolset(
+            connection_params=StdioConnectionParams(
+                server_params=StdioServerParameters(
+                    command='npx',
+                    args=["-y", "@carbonvoice/cv-mcp-server"],
+                    env={
+                        "LOG_LEVEL": "info"
+                    },
+                ),
+            ),
+            auth_scheme=OAuth2(
+                flows=OAuthFlows(
+                    authorizationCode=OAuthFlowAuthorizationCode(
+                        authorizationUrl="https://api.carbonvoice.app/oauth/authorize",
+                        tokenUrl="https://api.carbonvoice.app/oauth/token",
+                        scopes={
+                            "files:read": "Read files",
+                            "files:write": "Write files"
+                        },
+                    )
+                )
+            ),
+            auth_credential=AuthCredential(
+                auth_type=AuthCredentialTypes.OAUTH2,
+                oauth2=OAuth2Auth(
+                    client_id=os.getenv("CARBON_CLIENT_ID", "YOUR_CARBON_CLIENT_ID"),
+                    client_secret=os.getenv("CARBON_CLIENT_SECRET", "YOUR_CARBON_CLIENT_SECRET"),
+                    redirect_uri=os.getenv("CARBON_REDIRECT_URI", "https://cristianmgm7.github.io/carbon-console-auth/"),
+                )
+            )
+        )
+    )
+    print("Added Carbon Voice MCP tools")
+except Exception as e:
+    print(f"Warning: Could not add Carbon Voice MCP tools: {e}")
+
 carbon_voice_agent = Agent(
     model='gemini-2.5-flash',
     name='carbon_voice_agent',
     description='A communication specialist for Carbon Voice messaging.',
     instruction=load_instruction('carbon_voice_agent.txt'),
-    tools=[],  # Start simple, add MCP tools later
+    tools=carbon_voice_tools,
 )
+
+# Create Atlassian agent with MCP tools
+atlassian_tools = []
+try:
+    atlassian_tools.append(
+        McpToolset(
+            connection_params=StdioConnectionParams(
+                server_params=StdioServerParameters(
+                    command="npx",
+                    args=[
+                        "-y",
+                        "mcp-remote",
+                        "https://mcp.atlassian.com/v1/sse",
+                    ]
+                ),
+                timeout=30,
+            ),
+        )
+    )
+    print("Added Atlassian MCP tools")
+except Exception as e:
+    print(f"Warning: Could not add Atlassian MCP tools: {e}")
 
 atlassian_agent = Agent(
     model='gemini-2.5-flash',
     name='atlassian_agent',
     description='An assistant for Atlassian tools like Jira and Confluence.',
     instruction=load_instruction('atlassian_agent.txt'),
-    tools=[],  # Start simple, add MCP tools later
+    tools=atlassian_tools,
 )
+
+# Create Google Calendar agent with OpenAPI tools
+google_calendar_tools = []
+if GOOGLE_CALENDAR_SPEC:
+    try:
+        google_calendar_tools.append(
+            OpenAPIToolset(
+                spec_str=GOOGLE_CALENDAR_SPEC,
+                spec_str_type='yaml',
+                auth_scheme=OAuth2(
+                    flows=OAuthFlows(
+                        authorizationCode=OAuthFlowAuthorizationCode(
+                            authorizationUrl="https://accounts.google.com/o/oauth2/auth",
+                            tokenUrl="https://oauth2.googleapis.com/token",
+                            scopes={
+                                "https://www.googleapis.com/auth/calendar": "See, edit, share, and permanently delete all the calendars you can access using Google Calendar",
+                                "https://www.googleapis.com/auth/calendar.events": "View and edit events on all your calendars",
+                            },
+                        )
+                    )
+                ),
+                auth_credential=AuthCredential(
+                    auth_type=AuthCredentialTypes.OAUTH2,
+                    oauth2=OAuth2Auth(
+                        client_id=os.getenv("GOOGLE_CLIENT_ID", "YOUR_GOOGLE_CLIENT_ID"),
+                        client_secret=os.getenv("GOOGLE_CLIENT_SECRET", "YOUR_GOOGLE_CLIENT_SECRET"),
+                        redirect_uri=os.getenv("GOOGLE_REDIRECT_URI", "https://cristianmgm7.github.io/carbon-console-auth/"),
+                    )
+                )
+            )
+        )
+        print("Added Google Calendar OpenAPI tools")
+    except Exception as e:
+        print(f"Warning: Could not add Google Calendar OpenAPI tools: {e}")
 
 google_calendar_agent = Agent(
     model='gemini-2.5-flash',
     name='google_calendar_agent',
     description='A calendar assistant for managing events and schedules.',
     instruction=load_instruction('google_calendar_agent.txt'),
-    tools=[],  # Start simple, add OpenAPI tools later
+    tools=google_calendar_tools,
 )
 
 # Create root orchestrator agent with sub_agents
@@ -126,14 +239,14 @@ skills.append(orchestrator_skill)
 # Create comprehensive AgentCard for A2A protocol
 custom_agent_card = AgentCard(
     name='Carbon Voice Console Agent',
-    description='A comprehensive AI assistant that orchestrates operations across GitHub, Carbon Voice messaging, Atlassian tools (Jira/Confluence), and Google Calendar.',
+    description='A comprehensive AI assistant that orchestrates operations across GitHub, Carbon Voice messaging, Atlassian tools (Jira/Confluence), and Google Calendar with OAuth authentication.',
     url='http://localhost:8000',
     version='2.0.0',
     default_input_modes=['text/plain'],
     default_output_modes=['text/plain'],
     capabilities=AgentCapabilities(streaming=True),
     skills=skills,
-    supports_authenticated_extended_card=True,  # Enable OAuth flows
+    supports_authenticated_extended_card=True,  # Enable OAuth flows for MCP and OpenAPI tools
 )
 
 # Expose via A2A using to_a2a() with comprehensive agent card
