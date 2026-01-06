@@ -25,7 +25,8 @@ class SurfacePanel extends StatelessWidget {
           );
         }
 
-        return Expanded(
+        return Container(
+          color: Colors.red,
           child: SingleChildScrollView(
             child: GenUiSurface(
               key: ValueKey(state.currentSurfaceId),

@@ -47,8 +47,7 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
       _a2uiMessageProcessor = A2uiMessageProcessor(
         catalogs: [
           CoreCatalogItems.asCatalog().copyWith([
-            loginWidget,
-            oauthLoginWidget,
+            authConnectorWidget,
           ]),
         ],
       );
