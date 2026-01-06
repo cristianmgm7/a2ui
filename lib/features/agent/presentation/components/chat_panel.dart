@@ -17,7 +17,7 @@ class ChatPanel extends StatelessWidget {
     return BlocBuilder<AgentBloc, AgentState>(
       builder: (context, state) {
         return ConstrainedBox(
-          constraints: const BoxConstraints(minWidth: 200, maxWidth: 300),
+          constraints: const BoxConstraints(minWidth: 200, maxWidth: 600),
           child: Column(
             children: <Widget>[
               Expanded(
