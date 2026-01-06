@@ -44,11 +44,16 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
     emit(state.copyWith(status: ConnectionStatus.loading));
 
     try {
+      // Create custom catalog with AuthConnector widget
+      final customAuthCatalog = Catalog(
+        [authConnectorWidget],
+        catalogId: 'com.a2ui.auth-catalog-v1',
+      );
+
       _a2uiMessageProcessor = A2uiMessageProcessor(
         catalogs: [
-          CoreCatalogItems.asCatalog().copyWith([
-            authConnectorWidget,
-          ]),
+          CoreCatalogItems.asCatalog(),
+          customAuthCatalog,
         ],
       );
 
