@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:genui/genui.dart';
 import 'package:genui_a2ui/genui_a2ui.dart';
 
+import '../widgets/login_widgets.dart';
 import 'agent_event.dart';
 import 'agent_state.dart';
 
@@ -26,15 +27,15 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
 
   final Uri _serverUrl;
 
-  late final A2uiMessageProcessor _a2uiMessageProcessor;
-  late final A2uiContentGenerator _contentGenerator;
-  late final GenUiConversation _genUiConversation;
+  A2uiMessageProcessor? _a2uiMessageProcessor;
+  A2uiContentGenerator? _contentGenerator;
+  GenUiConversation? _genUiConversation;
 
   StreamSubscription<GenUiUpdate>? _surfaceSubscription;
   VoidCallback? _conversationListener;
 
   /// Returns the A2uiMessageProcessor for use by the UI.
-  A2uiMessageProcessor get messageProcessor => _a2uiMessageProcessor;
+  A2uiMessageProcessor? get messageProcessor => _a2uiMessageProcessor;
 
   Future<void> _onInitializeAgent(
     InitializeAgent event,
@@ -44,7 +45,12 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
 
     try {
       _a2uiMessageProcessor = A2uiMessageProcessor(
-        catalogs: [CoreCatalogItems.asCatalog()],
+        catalogs: [
+          CoreCatalogItems.asCatalog().copyWith([
+            loginWidget,
+            oauthLoginWidget,
+          ]),
+        ],
       );
 
       _contentGenerator = A2uiContentGenerator(
@@ -52,33 +58,33 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
       );
 
       _genUiConversation = GenUiConversation(
-        contentGenerator: _contentGenerator,
-        a2uiMessageProcessor: _a2uiMessageProcessor,
+        contentGenerator: _contentGenerator!,
+        a2uiMessageProcessor: _a2uiMessageProcessor!,
       );
 
       // Initialize with existing surfaces
       final existingSurfaceIds = List<String>.from(state.surfaceIds);
-      for (final id in _a2uiMessageProcessor.surfaces.keys) {
+      for (final id in _a2uiMessageProcessor!.surfaces.keys) {
         if (!existingSurfaceIds.contains(id)) {
           existingSurfaceIds.add(id);
         }
       }
 
       // Listen to surface updates
-      _surfaceSubscription = _a2uiMessageProcessor.surfaceUpdates.listen(
+      _surfaceSubscription = _a2uiMessageProcessor!.surfaceUpdates.listen(
         (update) => add(OnProtocolUpdate(update)),
       );
 
       // Listen to conversation changes
       _conversationListener = () {
-        add(OnMessagesUpdated(_genUiConversation.conversation.value));
+        add(OnMessagesUpdated(_genUiConversation!.conversation.value));
       };
-      _genUiConversation.conversation.addListener(_conversationListener!);
+      _genUiConversation!.conversation.addListener(_conversationListener!);
 
       emit(state.copyWith(
         status: ConnectionStatus.initial,
         surfaceIds: existingSurfaceIds,
-        surfaces: Map.from(_a2uiMessageProcessor.surfaces),
+        surfaces: Map.from(_a2uiMessageProcessor!.surfaces),
       ));
     } catch (e) {
       emit(state.copyWith(
@@ -95,7 +101,7 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
     if (event.text.trim().isEmpty) return;
 
     emit(state.copyWith(status: ConnectionStatus.streaming));
-    _genUiConversation.sendRequest(UserMessage.text(event.text));
+    _genUiConversation?.sendRequest(UserMessage.text(event.text));
   }
 
   void _onProtocolUpdate(
@@ -109,17 +115,17 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
       genUiLogger.info('Surface added: ${update.surfaceId}');
       if (!currentSurfaceIds.contains(update.surfaceId)) {
         currentSurfaceIds.add(update.surfaceId);
-        emit(state.copyWith(
-          surfaceIds: currentSurfaceIds,
-          currentSurfaceId: update.surfaceId,
-          surfaces: Map.from(_a2uiMessageProcessor.surfaces),
-          status: ConnectionStatus.streaming,
-        ));
+      emit(state.copyWith(
+        surfaceIds: currentSurfaceIds,
+        currentSurfaceId: update.surfaceId,
+        surfaces: Map.from(_a2uiMessageProcessor!.surfaces),
+        status: ConnectionStatus.streaming,
+      ));
       }
     } else if (update is SurfaceUpdated) {
       genUiLogger.info('Surface updated: ${update.surfaceId}');
       emit(state.copyWith(
-        surfaces: Map.from(_a2uiMessageProcessor.surfaces),
+        surfaces: Map.from(_a2uiMessageProcessor!.surfaces),
         status: ConnectionStatus.streaming,
       ));
     } else if (update is SurfaceRemoved) {
@@ -143,7 +149,7 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
         emit(state.copyWith(
           surfaceIds: currentSurfaceIds,
           currentSurfaceId: newCurrentSurfaceId,
-          surfaces: Map.from(_a2uiMessageProcessor.surfaces),
+          surfaces: Map.from(_a2uiMessageProcessor!.surfaces),
         ));
       }
     }
@@ -192,11 +198,11 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
   Future<void> close() {
     _surfaceSubscription?.cancel();
     if (_conversationListener != null) {
-      _genUiConversation.conversation.removeListener(_conversationListener!);
+      _genUiConversation?.conversation.removeListener(_conversationListener!);
     }
-    _genUiConversation.dispose();
-    _a2uiMessageProcessor.dispose();
-    _contentGenerator.dispose();
+    _genUiConversation?.dispose();
+    _a2uiMessageProcessor?.dispose();
+    _contentGenerator?.dispose();
     return super.close();
   }
 }

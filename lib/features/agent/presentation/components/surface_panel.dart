@@ -15,11 +15,21 @@ class SurfacePanel extends StatelessWidget {
     return BlocBuilder<AgentBloc, AgentState>(
       builder: (context, state) {
         final agentBloc = context.read<AgentBloc>();
+
+        // Don't render GenUiSurface until the message processor is initialized
+        if (agentBloc.messageProcessor == null) {
+          return const Expanded(
+            child: Center(
+              child: CircularProgressIndicator(),
+            ),
+          );
+        }
+
         return Expanded(
           child: SingleChildScrollView(
             child: GenUiSurface(
               key: ValueKey(state.currentSurfaceId),
-              host: agentBloc.messageProcessor,
+              host: agentBloc.messageProcessor!,
               surfaceId: state.currentSurfaceId,
             ),
           ),
