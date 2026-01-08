@@ -6,6 +6,7 @@ import 'package:genui/genui.dart';
 import 'package:genui_a2ui/genui_a2ui.dart';
 
 import '../widgets/login_widgets.dart';
+import '../widgets/post_widgets.dart';
 import 'agent_event.dart';
 import 'agent_state.dart';
 
@@ -14,7 +15,7 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
   /// Creates an [AgentBloc].
   AgentBloc({
     Uri? serverUrl,
-  })  : _serverUrl = serverUrl ?? Uri.parse('http://localhost:8000'),
+  })  : _serverUrl = serverUrl ?? Uri.parse('http://localhost:10003'),
         super(const AgentState()) {
     on<InitializeAgent>(_onInitializeAgent);
     on<SendMessage>(_onSendMessage);
@@ -44,9 +45,9 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
     emit(state.copyWith(status: ConnectionStatus.loading));
 
     try {
-      // Create custom catalog with AuthConnector widget
+      // Create custom catalog with AuthConnector and Post widgets
       final customAuthCatalog = Catalog(
-        [authConnectorWidget],
+        [authConnectorWidget, postCardWidget, postCreatorWidget],
         catalogId: 'com.a2ui.auth-catalog-v1',
       );
 
