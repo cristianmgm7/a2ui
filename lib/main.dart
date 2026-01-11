@@ -7,9 +7,9 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:genui/genui.dart';
 import 'package:logging/logging.dart';
 
-import 'features/agent/bloc/agent_bloc.dart';
-import 'features/agent/bloc/agent_event.dart';
-import 'features/agent/presentation/chat_screen.dart';
+import 'features/agent/genui/bloc/agent_bloc.dart';
+import 'features/agent/genui/bloc/agent_event.dart';
+import 'features/agent/genui/presentation/genui_agent_chat_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,7 +29,7 @@ class GenUIExampleApp extends StatelessWidget {
       theme: ThemeData(primarySwatch: Colors.deepPurple),
       home: BlocProvider(
         create: (context) => AgentBloc()..add(const InitializeAgent()),
-        child: const ChatScreen(),
+        child: const GenUiAgentChatScreen(),
       ),
     );
   }

@@ -1,3 +1,4 @@
+import 'package:a2ui/features/agent/genui/models/thinking_step.dart';
 import 'package:equatable/equatable.dart';
 import 'package:genui/genui.dart';
 
@@ -20,25 +21,20 @@ enum ConnectionStatus {
 class AgentState extends Equatable {
   /// Creates an [AgentState].
   const AgentState({
+    this.sessionId,
     this.messages = const [],
-    this.surfaces = const {},
-    this.surfaceIds = const ['default'],
-    this.currentSurfaceId = 'default',
     this.status = ConnectionStatus.initial,
     this.errorMessage,
+    this.currentThinkingSteps = const [],
+    this.isThinking = false,
+    this.thinkingError,
   });
+
+  /// The current session ID (for session management)
+  final String? sessionId;
 
   /// The history of the conversation.
   final List<ChatMessage> messages;
-
-  /// A collection of all active UI surfaces, keyed by surface ID.
-  final Map<String, dynamic> surfaces;
-
-  /// The ordered list of surface IDs for navigation.
-  final List<String> surfaceIds;
-
-  /// The ID of the surface currently in focus.
-  final String currentSurfaceId;
 
   /// The current connection status.
   final ConnectionStatus status;
@@ -46,41 +42,44 @@ class AgentState extends Equatable {
   /// An optional error message when status is [ConnectionStatus.error].
   final String? errorMessage;
 
-  /// The index of the current surface in the surface IDs list.
-  int get currentSurfaceIndex => surfaceIds.indexOf(currentSurfaceId);
+  /// Tracks agent's thinking/progress steps
+  final List<ThinkingStep> currentThinkingSteps;
 
-  /// Whether navigation to the previous surface is possible.
-  bool get canNavigatePrevious => currentSurfaceIndex > 0;
+  /// Whether agent is currently in thinking state
+  final bool isThinking;
 
-  /// Whether navigation to the next surface is possible.
-  bool get canNavigateNext => currentSurfaceIndex < surfaceIds.length - 1;
+  /// Error that occurred during thinking (if any)
+  final String? thinkingError;
 
   /// Creates a copy of this state with the given fields replaced.
   AgentState copyWith({
+    String? sessionId,
     List<ChatMessage>? messages,
-    Map<String, dynamic>? surfaces,
-    List<String>? surfaceIds,
-    String? currentSurfaceId,
     ConnectionStatus? status,
     String? errorMessage,
+    List<ThinkingStep>? currentThinkingSteps,
+    bool? isThinking,
+    String? thinkingError,
   }) {
     return AgentState(
+      sessionId: sessionId ?? this.sessionId,
       messages: messages ?? this.messages,
-      surfaces: surfaces ?? this.surfaces,
-      surfaceIds: surfaceIds ?? this.surfaceIds,
-      currentSurfaceId: currentSurfaceId ?? this.currentSurfaceId,
       status: status ?? this.status,
       errorMessage: errorMessage ?? this.errorMessage,
+      currentThinkingSteps: currentThinkingSteps ?? this.currentThinkingSteps,
+      isThinking: isThinking ?? this.isThinking,
+      thinkingError: thinkingError ?? this.thinkingError,
     );
   }
 
   @override
   List<Object?> get props => [
+        sessionId,
         messages,
-        surfaces,
-        surfaceIds,
-        currentSurfaceId,
         status,
         errorMessage,
+        currentThinkingSteps,
+        isThinking,
+        thinkingError,
       ];
 }
