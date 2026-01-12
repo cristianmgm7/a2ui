@@ -5,7 +5,6 @@ import 'package:a2ui/features/agent/genui/bloc/agent_state.dart';
 import 'package:a2ui/features/agent/genui/presentation/components/genui_chat_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:logger/logger.dart';
 
 /// Main GenUI-based Agent Chat Screen.
 ///
@@ -25,7 +24,6 @@ class GenUiAgentChatScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return BlocProvider(
       create: (context) => AgentBloc(
-        logger: Logger(),
         sessionId: sessionId,
       )..add(InitializeAgent(sessionId: sessionId)),
       child: const _GenUiAgentChatView(),

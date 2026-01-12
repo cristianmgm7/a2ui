@@ -4,14 +4,14 @@ import 'package:a2a/a2a.dart' as a2a;
 import 'package:a2ui/features/agent/data/config/adk_config.dart';
 import 'package:a2ui/features/agent/genui/bloc/agent_event.dart';
 import 'package:a2ui/features/agent/genui/bloc/agent_state.dart';
-import 'package:a2ui/features/agent/genui/models/thinking_step.dart';
+import 'package:a2ui/features/agent/genui/models/task_info.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:genui/genui.dart';
 
 /// BLoC for managing the agent's state and interactions using A2A protocol.
 ///
-/// This uses the A2AClient from the pure a2a package for simple text-based chat,
-/// avoiding the complexity of A2UI surfaces and protocol parsing.
+/// This uses the A2AClient from the pure a2a package and properly tracks
+/// individual tasks through their lifecycle with artifacts support.
 class AgentBloc extends Bloc<AgentEvent, AgentState> {
   /// Creates an [AgentBloc].
   AgentBloc({
@@ -40,7 +40,7 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
         status: ConnectionStatus.initial,
         sessionId: event.sessionId ?? state.sessionId,
       ));
-    } on Exception catch (e, stackTrace) {
+    } on Exception catch (e) {
       emit(state.copyWith(
         status: ConnectionStatus.error,
         errorMessage: e.toString(),
@@ -61,9 +61,6 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
     emit(state.copyWith(
       messages: updatedMessages,
       status: ConnectionStatus.streaming,
-      isThinking: true, // NEW: Start thinking state
-      currentThinkingSteps: [], // NEW: Reset thinking steps
-      thinkingError: null, // NEW: Clear previous errors
     ));
 
     try {
@@ -81,20 +78,20 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
 
       // Create message send parameters
       final params = a2a.A2AMessageSendParams()..message = message;
-      // hit the /message endpoint
+
       // Stream response from A2A server
       final streamingText = StringBuffer();
-
       final stream = _a2aClient!.sendMessageStream(params);
 
       await for (final response in stream) {
         // Handle error responses
         if (response.isError) {
           if (response is a2a.A2AJSONRPCErrorResponseSSM) {
-            // Set thinking error
+            final errorMsg = 'Error: ${response.error?.toString() ?? "Unknown error"}';
+
             emit(state.copyWith(
-              thinkingError: 'Error: ${response.error?.toString() ?? "Unknown error"}',
-              isThinking: false,
+              status: ConnectionStatus.error,
+              errorMessage: errorMsg,
             ));
           }
           continue;
@@ -105,10 +102,12 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
           final result = response.result;
 
           if (result != null) {
-            if (result is a2a.A2ATaskStatusUpdateEvent) {
-              _handleTaskStatusUpdate(result, streamingText, state.messages, emit);
-            } else if (result is a2a.A2ATask) {
-              _handleTask(result, streamingText, emit);
+            if (result is a2a.A2ATask) {
+              _handleTask(result, emit);
+            } else if (result is a2a.A2ATaskStatusUpdateEvent) {
+              _handleTaskStatusUpdate(result, streamingText, emit);
+            } else if (result is a2a.A2ATaskArtifactUpdateEvent) {
+              _handleArtifactUpdate(result, emit);
             } else if (result is a2a.A2AMessage) {
               _handleMessage(result, streamingText, emit);
             }
@@ -116,11 +115,9 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
         }
       }
 
-      // Add final AI response to messages
+      // Add final AI response to messages if we accumulated text
       if (streamingText.isNotEmpty) {
-        // Replace the last streaming message with the final complete message
         final currentMessages = state.messages;
-
         final finalMessages = _updateOrAddStreamingMessage(
           currentMessages,
           streamingText.toString(),
@@ -129,129 +126,89 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
         emit(state.copyWith(
           messages: finalMessages,
           status: ConnectionStatus.initial,
-          isThinking: false, // End thinking state
         ));
       } else {
         emit(state.copyWith(
           status: ConnectionStatus.initial,
-          isThinking: false, // End thinking state
         ));
       }
-    } on Exception catch (e, stackTrace) {
+    } on Exception catch (e) {
       emit(state.copyWith(
         status: ConnectionStatus.error,
         errorMessage: 'Failed to send message: $e',
-        isThinking: false, // NEW: End thinking state on error
-        thinkingError: e.toString(), // NEW: Capture error
       ));
     }
   }
 
+  /// Handles initial Task object from the stream.
+  void _handleTask(
+    a2a.A2ATask task,
+    Emitter<AgentState> emit,
+  ) {
+    final taskId = task.id;
+    final contextId = task.contextId;
+
+    // Create or update task in our state
+    final updatedTasks = Map<String, TaskInfo>.from(state.tasks);
+
+    final taskInfo = TaskInfo(
+      taskId: taskId,
+      contextId: contextId,
+      state: mapA2ATaskState(task.status?.state),
+      statusMessages: [],
+      artifacts: task.artifacts ?? [],
+      lastUpdated: DateTime.now(),
+    );
+
+    updatedTasks[taskId] = taskInfo;
+
+    emit(state.copyWith(
+      tasks: updatedTasks,
+      currentContextId: contextId,
+    ));
+  }
+
+  /// Handles TaskStatusUpdateEvent for task lifecycle changes.
   void _handleTaskStatusUpdate(
     a2a.A2ATaskStatusUpdateEvent event,
     StringBuffer streamingText,
-    List<ChatMessage> currentMessages,
     Emitter<AgentState> emit,
   ) {
-    if (event.status != null) {
-      final taskState = event.status!.state;
+    final taskId = event.taskId;
+    final contextId = event.contextId;
 
-      // Handle thinking steps for working state
-      if (taskState == a2a.A2ATaskState.working) {
-        if (event.status!.message != null) {
-          final message = event.status!.message;
+    // Get existing task or create new one
+    final updatedTasks = Map<String, TaskInfo>.from(state.tasks);
+    var taskInfo = updatedTasks[taskId] ??
+        TaskInfo(
+          taskId: taskId,
+          contextId: contextId,
+          lastUpdated: DateTime.now(),
+        );
 
-          // Extract thinking message text
-          final thinkingText = _extractThinkingText(message!.parts ?? []);
+    // Update task state
+    final newState = mapA2ATaskState(event.status?.state);
 
-          // Heuristic: If text is very long (>200 chars), it's likely the final answer, not a thinking step
-          final isLikelyFinalAnswer = thinkingText.length > 200;
+    // Extract status message if present
+    List<TaskMessagePart> updatedStatusMessages = List.from(taskInfo.statusMessages);
 
-          if (thinkingText.isNotEmpty && !isLikelyFinalAnswer) {
-            // Add thinking step to state
-            final newStep = ThinkingStep(
-              message: thinkingText,
-              timestamp: DateTime.now(),
-            );
+    if (event.status?.message != null) {
+      final messageText = _extractTextFromParts(event.status!.message!.parts ?? []);
 
-            final updatedSteps = [...state.currentThinkingSteps, newStep];
-
-            emit(state.copyWith(
-              currentThinkingSteps: updatedSteps,
-              isThinking: true,
-            ));
-            // Skip text extraction for thinking steps
-            return;
-          } else if (isLikelyFinalAnswer) {
-            // Don't return - let it fall through to extract as final response
-          } else {
-            return;
-          }
+      if (messageText.isNotEmpty) {
+        // For working state, add as status message (thinking step)
+        if (newState == TaskLifecycleState.working) {
+          updatedStatusMessages.add(TaskMessagePart(
+            text: messageText,
+            timestamp: DateTime.now(),
+          ));
         } else {
-          return;
-        }
-      }
-
-      // Continue with existing text extraction for final response
-      _extractTextFromStatus(event.status!, streamingText, currentMessages, emit);
-    }
-  }
-
-  void _handleTask(
-    a2a.A2ATask task,
-    StringBuffer streamingText,
-    Emitter<AgentState> emit,
-  ) {
-    if (task.status != null) {
-      _extractTextFromStatus(task.status!, streamingText, state.messages, emit);
-    }
-  }
-
-  void _handleMessage(
-    a2a.A2AMessage message,
-    StringBuffer streamingText,
-    Emitter<AgentState> emit,
-  ) {
-    _extractTextFromParts(message.parts ?? [], streamingText, state.messages, emit);
-  }
-
-  void _extractTextFromStatus(
-    a2a.A2ATaskStatus status,
-    StringBuffer streamingText,
-    List<ChatMessage> currentMessages,
-    Emitter<AgentState> emit,
-  ) {
-    if (status.message != null) {
-      _extractTextFromParts(
-        status.message!.parts ?? [],
-        streamingText,
-        currentMessages,
-        emit,
-        isWorking: status.state == a2a.A2ATaskState.working,
-      );
-    }
-  }
-
-  void _extractTextFromParts(
-    List<a2a.A2APart> parts,
-    StringBuffer streamingText,
-    List<ChatMessage> currentMessages,
-    Emitter<AgentState> emit, {
-    bool isWorking = false,
-  }) {
-    for (final part in parts) {
-      if (part is a2a.A2ATextPart) {
-        final text = part.text;
-
-        // Only accumulate text if not a thinking step
-        // Thinking steps are handled separately in _handleTaskStatusUpdate
-        if (!isWorking) {
-          streamingText.write(text);
+          // For other states, accumulate in streaming text for final message
+          streamingText.write(messageText);
 
           // Emit intermediate updates for streaming display
-          // Replace the last message if it's already an AI message (streaming), otherwise add new one
           final messagesWithStreaming = _updateOrAddStreamingMessage(
-            currentMessages,
+            state.messages,
             streamingText.toString(),
           );
 
@@ -262,13 +219,110 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
         }
       }
     }
+
+    // Update task info
+    taskInfo = taskInfo.copyWith(
+      state: newState,
+      statusMessages: updatedStatusMessages,
+      isFinal: event.end ?? false,
+      lastUpdated: DateTime.now(),
+    );
+
+    updatedTasks[taskId] = taskInfo;
+
+    emit(state.copyWith(
+      tasks: updatedTasks,
+      currentContextId: contextId,
+    ));
   }
 
-  /// Extracts text content from parts for thinking steps.
-  ///
-  /// This is separate from _extractTextFromParts because thinking steps
-  /// should only extract text, not emit full state updates.
-  String _extractThinkingText(List<a2a.A2APart> parts) {
+  /// Handles TaskArtifactUpdateEvent for artifact generation.
+  void _handleArtifactUpdate(
+    a2a.A2ATaskArtifactUpdateEvent event,
+    Emitter<AgentState> emit,
+  ) {
+    final taskId = event.taskId;
+    final contextId = event.contextId;
+
+    if (event.artifact == null) return;
+
+    // Get existing task or create new one
+    final updatedTasks = Map<String, TaskInfo>.from(state.tasks);
+    var taskInfo = updatedTasks[taskId] ??
+        TaskInfo(
+          taskId: taskId,
+          contextId: contextId,
+          lastUpdated: DateTime.now(),
+        );
+
+    // Update artifacts list
+    final updatedArtifacts = List<a2a.A2AArtifact>.from(taskInfo.artifacts);
+
+    final artifact = event.artifact!;
+    final existingIndex = updatedArtifacts.indexWhere(
+      (a) => a.artifactId == artifact.artifactId,
+    );
+
+    if (event.append == true && existingIndex != -1) {
+      // Append to existing artifact
+      final existing = updatedArtifacts[existingIndex];
+      final mergedParts = [...existing.parts, ...artifact.parts];
+
+      updatedArtifacts[existingIndex] = a2a.A2AArtifact()
+        ..artifactId = artifact.artifactId
+        ..name = artifact.name ?? existing.name
+        ..description = artifact.description ?? existing.description
+        ..parts = mergedParts
+        ..metadata = artifact.metadata ?? existing.metadata
+        ..extensions = artifact.extensions ?? existing.extensions;
+    } else if (existingIndex != -1) {
+      // Replace existing artifact
+      updatedArtifacts[existingIndex] = artifact;
+    } else {
+      // Add new artifact
+      updatedArtifacts.add(artifact);
+    }
+
+    // Update task info
+    taskInfo = taskInfo.copyWith(
+      artifacts: updatedArtifacts,
+      lastUpdated: DateTime.now(),
+    );
+
+    updatedTasks[taskId] = taskInfo;
+
+    emit(state.copyWith(
+      tasks: updatedTasks,
+      currentContextId: contextId,
+    ));
+  }
+
+  /// Handles direct Message responses (not part of a task).
+  void _handleMessage(
+    a2a.A2AMessage message,
+    StringBuffer streamingText,
+    Emitter<AgentState> emit,
+  ) {
+    final text = _extractTextFromParts(message.parts ?? []);
+
+    if (text.isNotEmpty) {
+      streamingText.write(text);
+
+      // Emit intermediate updates for streaming display
+      final messagesWithStreaming = _updateOrAddStreamingMessage(
+        state.messages,
+        streamingText.toString(),
+      );
+
+      emit(state.copyWith(
+        messages: messagesWithStreaming,
+        status: ConnectionStatus.streaming,
+      ));
+    }
+  }
+
+  /// Extracts text content from A2A parts.
+  String _extractTextFromParts(List<a2a.A2APart> parts) {
     final buffer = StringBuffer();
 
     for (final part in parts) {
@@ -281,8 +335,6 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
   }
 
   /// Updates the streaming AI message or adds a new one if none exists.
-  ///
-  /// This prevents multiple streaming messages from accumulating in the chat.
   List<ChatMessage> _updateOrAddStreamingMessage(
     List<ChatMessage> currentMessages,
     String streamingText,
