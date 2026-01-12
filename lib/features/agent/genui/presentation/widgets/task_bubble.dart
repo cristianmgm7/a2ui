@@ -1,3 +1,4 @@
+import 'package:a2a/a2a.dart' as a2a;
 import 'package:a2ui/core/theme/app_colors.dart';
 import 'package:a2ui/features/agent/genui/models/task_info.dart';
 import 'package:flutter/material.dart';
@@ -442,48 +443,328 @@ class _TaskBubbleState extends State<TaskBubble>
   }
 
   Widget _buildArtifactItem(dynamic artifact) {
-    // Placeholder for now - will be enhanced with proper artifact rendering
     return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.all(8),
+      margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
         color: AppColors.background,
         border: Border.all(color: AppColors.border),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            PhosphorIcons.file(),
-            size: 16,
-            color: AppColors.info,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          // Header
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: AppColors.info.withValues(alpha: 0.05),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(8),
+                topRight: Radius.circular(8),
+              ),
+            ),
+            child: Row(
               children: [
-                Text(
-                  artifact.name ?? 'Artifact ${artifact.artifactId.substring(0, 8)}',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
+                Icon(
+                  _getArtifactIcon(artifact),
+                  size: 16,
+                  color: AppColors.info,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        artifact.name ?? 'Artifact ${artifact.artifactId.substring(0, 8)}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      if (artifact.description != null)
+                        Text(
+                          artifact.description!,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-                if (artifact.description != null)
-                  Text(
-                    artifact.description!,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
               ],
             ),
           ),
+
+          // Content
+          _buildArtifactContent(artifact),
         ],
       ),
     );
+  }
+
+  /// Determines the appropriate icon based on artifact parts
+  IconData _getArtifactIcon(dynamic artifact) {
+    if (artifact.parts == null || artifact.parts.isEmpty) {
+      return PhosphorIcons.file();
+    }
+
+    final firstPart = artifact.parts.first;
+
+    if (firstPart is a2a.A2ATextPart) {
+      return PhosphorIcons.fileText();
+    } else if (firstPart is a2a.A2ADataPart) {
+      return PhosphorIcons.fileCode();
+    } else if (firstPart is a2a.A2AFilePart) {
+      return PhosphorIcons.fileArrowDown();
+    }
+
+    return PhosphorIcons.file();
+  }
+
+  /// Builds the content display for an artifact based on its parts
+  Widget _buildArtifactContent(dynamic artifact) {
+    if (artifact.parts == null || artifact.parts.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(8),
+        child: Text(
+          'No content available',
+          style: TextStyle(
+            fontSize: 11,
+            color: AppColors.textSecondary.withValues(alpha: 0.5),
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 300),
+      child: ListView.builder(
+        shrinkWrap: true,
+        physics: const ClampingScrollPhysics(),
+        itemCount: artifact.parts.length,
+        itemBuilder: (context, index) {
+          final part = artifact.parts[index];
+          return _buildPartContent(part, index);
+        },
+      ),
+    );
+  }
+
+  /// Builds content display for a specific part
+  Widget _buildPartContent(dynamic part, int index) {
+    // TextPart: Show text content
+    if (part is a2a.A2ATextPart) {
+      return Container(
+        padding: const EdgeInsets.all(8),
+        child: SelectableText(
+          part.text,
+          style: const TextStyle(
+            fontSize: 11,
+            color: AppColors.textPrimary,
+            fontFamily: 'monospace',
+            height: 1.4,
+          ),
+        ),
+      );
+    }
+
+    // DataPart: Show structured data (JSON)
+    if (part is a2a.A2ADataPart) {
+      return Container(
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  PhosphorIcons.fileCode(),
+                  size: 12,
+                  color: AppColors.info,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  'Structured Data',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.info.withValues(alpha: 0.8),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: SelectableText(
+                _formatJson(part.data),
+                style: const TextStyle(
+                  fontSize: 10,
+                  color: AppColors.textPrimary,
+                  fontFamily: 'monospace',
+                  height: 1.3,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // FilePart: Show file info
+    if (part is a2a.A2AFilePart) {
+      final fileInfo = part.file;
+
+      return Container(
+        padding: const EdgeInsets.all(8),
+        child: Row(
+          children: [
+            Icon(
+              PhosphorIcons.paperclip(),
+              size: 14,
+              color: AppColors.info,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (fileInfo is a2a.A2AFileWithUri)
+                    Text(
+                      'File: ${fileInfo.name.isNotEmpty ? fileInfo.name : "unnamed"}',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.textPrimary,
+                      ),
+                    )
+                  else if (fileInfo is a2a.A2AFileWithBytes)
+                    Text(
+                      'File: ${fileInfo.name.isNotEmpty ? fileInfo.name : "unnamed"} (${fileInfo.bytes.length} bytes)',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.textPrimary,
+                      ),
+                    )
+                  else
+                    const Text(
+                      'File attachment',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  if (fileInfo != null)
+                    Text(
+                      'Type: ${_getMimeType(fileInfo)}',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  if (fileInfo is a2a.A2AFileWithUri && fileInfo.uri.isNotEmpty)
+                    Text(
+                      'URI: ${fileInfo.uri}',
+                      style: const TextStyle(
+                        fontSize: 9,
+                        color: AppColors.textSecondary,
+                        fontFamily: 'monospace',
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                ],
+              ),
+            ),
+            Icon(
+              PhosphorIcons.downloadSimple(),
+              size: 16,
+              color: AppColors.info,
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Unknown part type
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: Text(
+        'Unknown content type',
+        style: TextStyle(
+          fontSize: 11,
+          color: AppColors.textSecondary.withValues(alpha: 0.5),
+          fontStyle: FontStyle.italic,
+        ),
+      ),
+    );
+  }
+
+  /// Formats JSON data for display
+  String _formatJson(Map<String, dynamic> data) {
+    try {
+      // Simple JSON formatting with indentation
+      final buffer = StringBuffer();
+      _writeJsonObject(data, buffer, 0);
+      return buffer.toString();
+    } catch (e) {
+      return data.toString();
+    }
+  }
+
+  void _writeJsonObject(dynamic obj, StringBuffer buffer, int indent) {
+    final indentStr = '  ' * indent;
+
+    if (obj is Map) {
+      buffer.writeln('{');
+      final entries = obj.entries.toList();
+      for (var i = 0; i < entries.length; i++) {
+        final entry = entries[i];
+        buffer.write('$indentStr  "${entry.key}": ');
+        _writeJsonValue(entry.value, buffer, indent + 1);
+        if (i < entries.length - 1) buffer.write(',');
+        buffer.writeln();
+      }
+      buffer.write('$indentStr}');
+    } else if (obj is List) {
+      buffer.writeln('[');
+      for (var i = 0; i < obj.length; i++) {
+        buffer.write('$indentStr  ');
+        _writeJsonValue(obj[i], buffer, indent + 1);
+        if (i < obj.length - 1) buffer.write(',');
+        buffer.writeln();
+      }
+      buffer.write('$indentStr]');
+    }
+  }
+
+  void _writeJsonValue(dynamic value, StringBuffer buffer, int indent) {
+    if (value is String) {
+      buffer.write('"$value"');
+    } else if (value is Map || value is List) {
+      _writeJsonObject(value, buffer, indent);
+    } else {
+      buffer.write(value.toString());
+    }
+  }
+
+  /// Extracts mime type from file variant
+  String _getMimeType(dynamic fileInfo) {
+    if (fileInfo is a2a.A2AFileWithUri) {
+      return fileInfo.mimeType.isNotEmpty ? fileInfo.mimeType : 'unknown';
+    } else if (fileInfo is a2a.A2AFileWithBytes) {
+      return fileInfo.mimeType.isNotEmpty ? fileInfo.mimeType : 'unknown';
+    }
+    return 'unknown';
   }
 }

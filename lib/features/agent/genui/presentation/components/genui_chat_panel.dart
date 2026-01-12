@@ -7,7 +7,6 @@ import 'package:a2ui/features/agent/genui/presentation/widgets/text_composer.dar
 import 'package:a2ui/features/agent/genui/presentation/widgets/task_bubble.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:genui/genui.dart';
 
 /// Chat panel component containing the message list and text input.
 /// Uses GenUI for A2UI protocol handling with individual task tracking.
@@ -19,11 +18,6 @@ class GenUiChatPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return BlocBuilder<AgentBloc, AgentState>(
       builder: (context, state) {
-        debugPrint('🎨 UI REBUILD - GenUiChatPanel');
-        debugPrint('🎨 State status: ${state.status}');
-        debugPrint('🎨 Messages count: ${state.messages.length}');
-        debugPrint('🎨 Tasks count: ${state.tasks.length}');
-        debugPrint('🎨 Current context tasks: ${state.currentContextTasks.length}');
 
         final isStreaming = state.status == ConnectionStatus.streaming;
 
