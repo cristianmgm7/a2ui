@@ -5,6 +5,26 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 /// Displays a single task's progress through its lifecycle.
 ///
+/// A2A Task Representation:
+/// - Tasks are the agent's internal work processes (NOT conversation)
+/// - Each task has a unique ID and progresses through states
+/// - Status messages = thinking steps ("Loading data...", "Analyzing...")
+/// - Artifacts = tangible outputs (files, JSON, images)
+///
+/// Visual Structure:
+/// ┌─────────────────────────────────────┐
+/// │ ⚙️ Working... [3 steps] 📎 2        │
+/// │   • Loading sales data...           │
+/// │   • Processing records...           │
+/// │   • Generating charts...            │
+/// │                                     │
+/// │ Artifacts:                          │
+/// │   📊 analysis.json                  │
+/// │   📈 chart.png                      │
+/// │                                     │
+/// │ Task ID: a3f8b2c1...                │
+/// └─────────────────────────────────────┘
+///
 /// Shows the task state, status messages (thinking steps), and artifacts.
 /// Each task is tracked individually by its ID.
 class TaskBubble extends StatefulWidget {

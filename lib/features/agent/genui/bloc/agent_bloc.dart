@@ -48,6 +48,20 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
     }
   }
 
+  /// Handles user message send event.
+  ///
+  /// A2A Protocol Flow:
+  /// 1. User sends message (conversation)
+  /// 2. Agent may respond with:
+  ///    a) A2ATask - Initial task object with metadata
+  ///    b) A2ATaskStatusUpdateEvent - Task progress/thinking steps (NOT conversation)
+  ///    c) A2ATaskArtifactUpdateEvent - Generated files/data (NOT conversation)
+  ///    d) A2AMessage - Actual agent response (ONLY THIS is conversation)
+  ///
+  /// Separation of concerns:
+  /// - Tasks = Agent's internal work process
+  /// - Artifacts = Tangible outputs (files, data)
+  /// - Messages = Conversation between user and agent
   Future<void> _onSendMessage(
     SendMessage event,
     Emitter<AgentState> emit,
@@ -80,6 +94,8 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
       final params = a2a.A2AMessageSendParams()..message = message;
 
       // Stream response from A2A server
+      // NOTE: streamingText only accumulates A2AMessage content (conversation)
+      // Task status updates are stored in TaskInfo, not here
       final streamingText = StringBuffer();
       final stream = _a2aClient!.sendMessageStream(params);
 
@@ -115,7 +131,9 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
         }
       }
 
-      // Add final AI response to messages if we accumulated text
+      // Add final AI response to messages if we accumulated text from A2AMessage
+      // NOTE: It's valid for tasks to complete without an A2AMessage
+      // (e.g., agent just generates artifacts without explanatory text)
       if (streamingText.isNotEmpty) {
         final currentMessages = state.messages;
         final finalMessages = _updateOrAddStreamingMessage(
@@ -128,6 +146,7 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
           status: ConnectionStatus.initial,
         ));
       } else {
+        // No conversation message - tasks may have completed with just artifacts
         emit(state.copyWith(
           status: ConnectionStatus.initial,
         ));
@@ -169,6 +188,10 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
   }
 
   /// Handles TaskStatusUpdateEvent for task lifecycle changes.
+  ///
+  /// IMPORTANT: Task status messages are NOT conversation messages.
+  /// They represent the agent's thinking/working process and should
+  /// only be stored in the TaskInfo, never in the messages list.
   void _handleTaskStatusUpdate(
     a2a.A2ATaskStatusUpdateEvent event,
     StringBuffer streamingText,
@@ -190,33 +213,19 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
     final newState = mapA2ATaskState(event.status?.state);
 
     // Extract status message if present
+    // ALL status messages go to the task, regardless of state
     List<TaskMessagePart> updatedStatusMessages = List.from(taskInfo.statusMessages);
 
     if (event.status?.message != null) {
       final messageText = _extractTextFromParts(event.status!.message!.parts ?? []);
 
       if (messageText.isNotEmpty) {
-        // For working state, add as status message (thinking step)
-        if (newState == TaskLifecycleState.working) {
-          updatedStatusMessages.add(TaskMessagePart(
-            text: messageText,
-            timestamp: DateTime.now(),
-          ));
-        } else {
-          // For other states, accumulate in streaming text for final message
-          streamingText.write(messageText);
-
-          // Emit intermediate updates for streaming display
-          final messagesWithStreaming = _updateOrAddStreamingMessage(
-            state.messages,
-            streamingText.toString(),
-          );
-
-          emit(state.copyWith(
-            messages: messagesWithStreaming,
-            status: ConnectionStatus.streaming,
-          ));
-        }
+        // Add status message to task (thinking step)
+        // These are NOT conversation messages - they're task progress updates
+        updatedStatusMessages.add(TaskMessagePart(
+          text: messageText,
+          timestamp: DateTime.now(),
+        ));
       }
     }
 
@@ -297,7 +306,17 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
     ));
   }
 
-  /// Handles direct Message responses (not part of a task).
+  /// Handles direct Message responses from the agent.
+  ///
+  /// IMPORTANT: This is the ONLY place where agent text becomes a conversation message.
+  /// A2AMessage represents actual agent responses in the conversation, NOT task status.
+  ///
+  /// Flow:
+  /// - User sends message
+  /// - Agent creates tasks (optional)
+  /// - Tasks have status updates (thinking steps) - NOT conversation messages
+  /// - Tasks may produce artifacts (files/data) - NOT conversation messages
+  /// - Agent sends A2AMessage - THIS becomes a conversation message
   void _handleMessage(
     a2a.A2AMessage message,
     StringBuffer streamingText,

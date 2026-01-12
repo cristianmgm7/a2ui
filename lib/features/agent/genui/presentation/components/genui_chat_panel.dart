@@ -73,6 +73,22 @@ class GenUiChatPanel extends StatelessWidget {
 
   /// Builds chat items including messages and task bubbles.
   ///
+  /// A2A Protocol UI Structure:
+  /// 1. Conversation Messages (messages list):
+  ///    - User messages: "Do X"
+  ///    - AI messages: "Done! Here's the result"
+  ///
+  /// 2. Task Bubbles (tasks map):
+  ///    - Show agent's thinking process
+  ///    - Display artifacts generated
+  ///    - Track task lifecycle states
+  ///
+  /// Example flow:
+  ///   User: "Generate sales report"
+  ///   Task 1: Working... [Loading data, Analyzing...]
+  ///   Task 1: Completed [Artifacts: report.pdf]
+  ///   AI: "Report generated!" (optional - task may complete without message)
+  ///
   /// Order (reversed for ListView):
   /// - Task bubbles (shown after most recent message)
   /// - AI message (if exists)
