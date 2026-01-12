@@ -7,7 +7,6 @@ import 'package:a2ui/features/agent/genui/bloc/agent_state.dart';
 import 'package:a2ui/features/agent/genui/models/thinking_step.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:genui/genui.dart';
-import 'package:logger/logger.dart';
 
 /// BLoC for managing the agent's state and interactions using A2A protocol.
 ///
@@ -17,17 +16,14 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
   /// Creates an [AgentBloc].
   AgentBloc({
     Uri? serverUrl,
-    Logger? logger,
     String? sessionId,
   })  : _serverUrl = serverUrl ?? Uri.parse(AdkConfig.baseUrl),
-        _logger = logger ?? Logger(),
         super(AgentState(sessionId: sessionId)) {
     on<InitializeAgent>(_onInitializeAgent);
     on<SendMessage>(_onSendMessage);
   }
 
   final Uri _serverUrl;
-  final Logger _logger;
 
   a2a.A2AClient? _a2aClient;
 
@@ -36,22 +32,15 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
     Emitter<AgentState> emit,
   ) async {
     emit(state.copyWith(status: ConnectionStatus.loading));
-
     try {
-      _logger.i('🚀 Initializing A2A client with server: $_serverUrl');
-
       // Create A2A client using pure a2a package
       // The client will fetch the agent card from /.well-known/agent.json
       _a2aClient = a2a.A2AClient(_serverUrl.toString());
-
-      _logger.i('✅ A2A client initialized successfully');
-
       emit(state.copyWith(
         status: ConnectionStatus.initial,
         sessionId: event.sessionId ?? state.sessionId,
       ));
     } on Exception catch (e, stackTrace) {
-      _logger.e('❌ Failed to initialize A2A client', error: e, stackTrace: stackTrace);
       emit(state.copyWith(
         status: ConnectionStatus.error,
         errorMessage: e.toString(),
@@ -60,25 +49,22 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
   }
 
   Future<void> _onSendMessage(
-  SendMessage event,
-  Emitter<AgentState> emit,
-) async {
-  if (event.text.trim().isEmpty) return;
+    SendMessage event,
+    Emitter<AgentState> emit,
+  ) async {
+    if (event.text.trim().isEmpty) return;
 
-  _logger.d('📤 Sending message: ${event.text}');
+    // Add user message to conversation
+    final userMessage = UserMessage.text(event.text);
+    final updatedMessages = [...state.messages, userMessage];
 
-  // Add user message to conversation
-  final userMessage = UserMessage.text(event.text);
-  final updatedMessages = [...state.messages, userMessage];
-
-  emit(state.copyWith(
-    messages: updatedMessages,
-    status: ConnectionStatus.streaming,
-    isThinking: true,  // NEW: Start thinking state
-    currentThinkingSteps: [],  // NEW: Reset thinking steps
-    thinkingError: null,  // NEW: Clear previous errors
-  ));
-
+    emit(state.copyWith(
+      messages: updatedMessages,
+      status: ConnectionStatus.streaming,
+      isThinking: true, // NEW: Start thinking state
+      currentThinkingSteps: [], // NEW: Reset thinking steps
+      thinkingError: null, // NEW: Clear previous errors
+    ));
 
     try {
       if (_a2aClient == null) {
@@ -95,26 +81,21 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
 
       // Create message send parameters
       final params = a2a.A2AMessageSendParams()..message = message;
-
+      // hit the /message endpoint
       // Stream response from A2A server
       final streamingText = StringBuffer();
 
       final stream = _a2aClient!.sendMessageStream(params);
 
       await for (final response in stream) {
-        _logger.d('📥 Received A2A response: ${response.runtimeType}');
-
         // Handle error responses
         if (response.isError) {
-          _logger.e('❌ Received error response from A2A server');
           if (response is a2a.A2AJSONRPCErrorResponseSSM) {
-            _logger.e('Error details: ${response.toJson()}');
-
-          // NEW: Set thinking error
-          emit(state.copyWith(
-            thinkingError: 'Error: ${response.error?.toString() ?? "Unknown error"}',
-            isThinking: false,
-          ));
+            // Set thinking error
+            emit(state.copyWith(
+              thinkingError: 'Error: ${response.error?.toString() ?? "Unknown error"}',
+              isThinking: false,
+            ));
           }
           continue;
         }
@@ -123,67 +104,45 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
         if (response is a2a.A2ASendStreamMessageSuccessResponse) {
           final result = response.result;
 
-          // Log the full structure of the response
-          _logger.d('📦 Full response JSON: ${response.toJson()}');
-
           if (result != null) {
-            _logger.d('📦 Result type: ${result.runtimeType}');
-
             if (result is a2a.A2ATaskStatusUpdateEvent) {
-              _logger.d('📦 TaskStatusUpdateEvent JSON: ${result.toJson()}');
               _handleTaskStatusUpdate(result, streamingText, state.messages, emit);
             } else if (result is a2a.A2ATask) {
-              _logger.d('📦 Task JSON: ${result.toJson()}');
               _handleTask(result, streamingText, emit);
             } else if (result is a2a.A2AMessage) {
-              _logger.d('📦 Message JSON: ${result.toJson()}');
               _handleMessage(result, streamingText, emit);
-            } else {
-              _logger.w('⚠️ Unknown result type: ${result.runtimeType}');
-              _logger.d('📦 Unknown result data: $result');
             }
-          } else {
-            _logger.w('⚠️ Response result is null');
           }
         }
       }
 
       // Add final AI response to messages
-      _logger.d('📤 Streaming text length: ${streamingText.length}');
-
       if (streamingText.isNotEmpty) {
         // Replace the last streaming message with the final complete message
         final currentMessages = state.messages;
-        _logger.d('📤 Current messages count: ${currentMessages.length}');
 
         final finalMessages = _updateOrAddStreamingMessage(
           currentMessages,
           streamingText.toString(),
         );
 
-        _logger.d('📤 Final messages count: ${finalMessages.length}');
-
         emit(state.copyWith(
           messages: finalMessages,
           status: ConnectionStatus.initial,
-          isThinking: false,  // NEW: End thinking state
+          isThinking: false, // End thinking state
         ));
-
-        _logger.i('✅ Message exchange complete');
       } else {
-        _logger.w('⚠️ No response received from agent');
         emit(state.copyWith(
           status: ConnectionStatus.initial,
-          isThinking: false,  // NEW: End thinking state
+          isThinking: false, // End thinking state
         ));
       }
     } on Exception catch (e, stackTrace) {
-      _logger.e('❌ Error sending message', error: e, stackTrace: stackTrace);
       emit(state.copyWith(
         status: ConnectionStatus.error,
         errorMessage: 'Failed to send message: $e',
-        isThinking: false,  // NEW: End thinking state on error
-        thinkingError: e.toString(),  // NEW: Capture error
+        isThinking: false, // NEW: End thinking state on error
+        thinkingError: e.toString(), // NEW: Capture error
       ));
     }
   }
@@ -194,33 +153,42 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
     List<ChatMessage> currentMessages,
     Emitter<AgentState> emit,
   ) {
-    _logger.d('📊 Handling TaskStatusUpdateEvent');
     if (event.status != null) {
       final taskState = event.status!.state;
-      _logger.d('📊 Task state: $taskState');
 
-      // NEW: Handle thinking steps for working state
-      if (taskState == a2a.A2ATaskState.working && event.status!.message != null) {
-        final message = event.status!.message;
+      // Handle thinking steps for working state
+      if (taskState == a2a.A2ATaskState.working) {
+        if (event.status!.message != null) {
+          final message = event.status!.message;
 
-        // Extract thinking message text
-        final thinkingText = _extractThinkingText(message!.parts ?? []);
+          // Extract thinking message text
+          final thinkingText = _extractThinkingText(message!.parts ?? []);
 
-        if (thinkingText.isNotEmpty) {
-          _logger.d('💭 Thinking step: $thinkingText');
+          // Heuristic: If text is very long (>200 chars), it's likely the final answer, not a thinking step
+          final isLikelyFinalAnswer = thinkingText.length > 200;
 
-          // Add thinking step to state
-          final newStep = ThinkingStep(
-            message: thinkingText,
-            timestamp: DateTime.now(),
-          );
+          if (thinkingText.isNotEmpty && !isLikelyFinalAnswer) {
+            // Add thinking step to state
+            final newStep = ThinkingStep(
+              message: thinkingText,
+              timestamp: DateTime.now(),
+            );
 
-          final updatedSteps = [...state.currentThinkingSteps, newStep];
+            final updatedSteps = [...state.currentThinkingSteps, newStep];
 
-          emit(state.copyWith(
-            currentThinkingSteps: updatedSteps,
-            isThinking: true,
-          ));
+            emit(state.copyWith(
+              currentThinkingSteps: updatedSteps,
+              isThinking: true,
+            ));
+            // Skip text extraction for thinking steps
+            return;
+          } else if (isLikelyFinalAnswer) {
+            // Don't return - let it fall through to extract as final response
+          } else {
+            return;
+          }
+        } else {
+          return;
         }
       }
 
@@ -253,8 +221,6 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
     List<ChatMessage> currentMessages,
     Emitter<AgentState> emit,
   ) {
-    _logger.d('📊 Task state: ${status.state}');
-
     if (status.message != null) {
       _extractTextFromParts(
         status.message!.parts ?? [],
@@ -273,19 +239,13 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
     Emitter<AgentState> emit, {
     bool isWorking = false,
   }) {
-    _logger.d('📦 Processing ${parts.length} parts, isWorking: $isWorking');
-
     for (final part in parts) {
-      _logger.d('📦 Part type: ${part.runtimeType}');
-
       if (part is a2a.A2ATextPart) {
         final text = part.text;
-        _logger.d('📝 Received text chunk: "${text.substring(0, text.length.clamp(0, 50))}..."');
 
-        // NEW: Only accumulate text if not a thinking step
+        // Only accumulate text if not a thinking step
         // Thinking steps are handled separately in _handleTaskStatusUpdate
         if (!isWorking) {
-          _logger.d('📝 Accumulating text for AI response');
           streamingText.write(text);
 
           // Emit intermediate updates for streaming display
@@ -295,25 +255,11 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
             streamingText.toString(),
           );
 
-          _logger.d('📝 Updated messages count: ${messagesWithStreaming.length}');
-
           emit(state.copyWith(
             messages: messagesWithStreaming,
             status: ConnectionStatus.streaming,
           ));
-        } else {
-          _logger.d('📝 Skipping text accumulation (is thinking step)');
         }
-      } else if (part is a2a.A2ADataPart) {
-        _logger.i('📊 Received DataPart with structured data:');
-        _logger.i('   Data: ${part.data}');
-        _logger.i('   Metadata: ${part.metadata}');
-      } else if (part is a2a.A2AFilePart) {
-        _logger.i('📎 Received FilePart:');
-        _logger.i('   File: ${part.file}');
-        _logger.i('   Metadata: ${part.metadata}');
-      } else {
-        _logger.w('⚠️ Unknown part type: ${part.runtimeType}');
       }
     }
   }
@@ -355,7 +301,6 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
 
   @override
   Future<void> close() async {
-    _logger.i('🔌 Closing agent bloc');
     // A2AClient doesn't have a close method, it's stateless
     _a2aClient = null;
     return super.close();

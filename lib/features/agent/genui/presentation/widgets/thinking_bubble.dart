@@ -37,8 +37,8 @@ class _ThinkingBubbleState extends State<ThinkingBubble>
   @override
   void initState() {
     super.initState();
-    // Start expanded if actively thinking, collapsed otherwise
-    _isExpanded = widget.isActive;
+    // Always start expanded to show thinking steps
+    _isExpanded = true;
 
     // Pulse animation for active thinking indicator
     _pulseController = AnimationController(
@@ -55,16 +55,22 @@ class _ThinkingBubbleState extends State<ThinkingBubble>
   void didUpdateWidget(ThinkingBubble oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    // Auto-expand when thinking starts
+    // Auto-expand when thinking starts or when new steps are added
     if (widget.isActive && !oldWidget.isActive) {
       setState(() => _isExpanded = true);
       _pulseController.repeat();
     }
 
-    // Auto-collapse when thinking completes
+    // Keep expanded when thinking completes so user can review steps
+    // Only stop the pulse animation
     if (!widget.isActive && oldWidget.isActive) {
-      setState(() => _isExpanded = false);
       _pulseController.stop();
+      // Keep _isExpanded = true so steps remain visible
+    }
+
+    // Auto-expand if new thinking steps are added
+    if (widget.thinkingSteps.length > oldWidget.thinkingSteps.length) {
+      setState(() => _isExpanded = true);
     }
   }
 
@@ -142,7 +148,7 @@ class _ThinkingBubbleState extends State<ThinkingBubble>
                         ? 'Thinking...'
                         : widget.error != null
                             ? 'Thinking (Failed)'
-                            : 'Thinking',
+                            : 'Thinking Complete',
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
@@ -152,15 +158,31 @@ class _ThinkingBubbleState extends State<ThinkingBubble>
                     ),
                   ),
 
-                  const SizedBox(width: 4),
+                  const SizedBox(width: 6),
 
-                  // Step count
+                  // Step count - more prominent
                   if (widget.thinkingSteps.isNotEmpty)
-                    Text(
-                      '(${widget.thinkingSteps.length})',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: AppColors.textSecondary,
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: widget.isActive
+                            ? AppColors.primary.withValues(alpha: 0.1)
+                            : AppColors.success.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: widget.isActive
+                              ? AppColors.primary.withValues(alpha: 0.3)
+                              : AppColors.success.withValues(alpha: 0.3),
+                          width: 1,
+                        ),
+                      ),
+                      child: Text(
+                        '${widget.thinkingSteps.length} step${widget.thinkingSteps.length > 1 ? "s" : ""}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: widget.isActive ? AppColors.primary : AppColors.success,
+                        ),
                       ),
                     ),
 

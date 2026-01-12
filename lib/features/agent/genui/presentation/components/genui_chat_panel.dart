@@ -19,6 +19,13 @@ class GenUiChatPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return BlocBuilder<AgentBloc, AgentState>(
       builder: (context, state) {
+        debugPrint('🎨 UI REBUILD - GenUiChatPanel');
+        debugPrint('🎨 State status: ${state.status}');
+        debugPrint('🎨 Messages count: ${state.messages.length}');
+        debugPrint('🎨 Is thinking: ${state.isThinking}');
+        debugPrint('🎨 Thinking steps: ${state.currentThinkingSteps.length}');
+        debugPrint('🎨 Thinking error: ${state.thinkingError}');
+
         final isStreaming = state.status == ConnectionStatus.streaming;
 
         return ConstrainedBox(
@@ -68,8 +75,8 @@ class GenUiChatPanel extends StatelessWidget {
   /// Builds chat items including messages and thinking bubble.
   ///
   /// Order (reversed for ListView):
-  /// - Final AI message (if exists)
-  /// - Thinking bubble (if active or has steps)
+  /// - Thinking bubble (if has steps, shown after most recent message pair)
+  /// - AI message (if exists)
   /// - User message
   /// - Previous messages...
   List<Widget> _buildChatItems(AgentState state) {
@@ -78,16 +85,21 @@ class GenUiChatPanel extends StatelessWidget {
     // Reverse messages for display (newest at bottom visually)
     final reversedMessages = state.messages.reversed.toList();
 
+    // Track if we've added the thinking bubble
+    bool thinkingBubbleAdded = false;
+
     for (var i = 0; i < reversedMessages.length; i++) {
       final message = reversedMessages[i];
 
       // Add regular message bubble
       items.add(GenUiMessageBubble(message: message));
 
-      // If this is the most recent user message and we're thinking,
-      // insert the thinking bubble after it
-      if (i == 0 && // Most recent message
-          message is UserMessage && // It's a user message
+      // Show thinking bubble after the most recent message if:
+      // 1. We haven't added it yet
+      // 2. We have thinking steps OR currently thinking
+      // 3. This is the most recent message (i == 0)
+      if (!thinkingBubbleAdded &&
+          i == 0 &&
           (state.isThinking || state.currentThinkingSteps.isNotEmpty)) {
         items.add(
           ThinkingBubble(
@@ -96,6 +108,7 @@ class GenUiChatPanel extends StatelessWidget {
             error: state.thinkingError,
           ),
         );
+        thinkingBubbleAdded = true;
       }
     }
 
