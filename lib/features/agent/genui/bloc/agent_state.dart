@@ -27,6 +27,7 @@ class AgentState extends Equatable {
     this.errorMessage,
     this.tasks = const {},
     this.currentContextId,
+    this.messageContextMap = const {},
   });
 
   /// The current session ID (for session management)
@@ -47,6 +48,10 @@ class AgentState extends Equatable {
 
   /// The current context ID for the active conversation
   final String? currentContextId;
+
+  /// Map of message indices to their associated context IDs
+  /// This allows us to display tasks after the message that triggered them
+  final Map<int, String> messageContextMap;
 
   /// Gets the currently active task (most recent non-terminal task)
   TaskInfo? get activeTask {
@@ -83,6 +88,21 @@ class AgentState extends Equatable {
     return contextTasks;
   }
 
+  /// Gets all tasks for a specific context ID sorted by last update time
+  List<TaskInfo> getTasksForContext(String contextId) {
+    final contextTasks = tasks.values
+        .where((task) => task.contextId == contextId)
+        .toList();
+
+    contextTasks.sort((a, b) {
+      if (a.lastUpdated == null) return 1;
+      if (b.lastUpdated == null) return -1;
+      return a.lastUpdated!.compareTo(b.lastUpdated!);
+    });
+
+    return contextTasks;
+  }
+
   /// Creates a copy of this state with the given fields replaced.
   AgentState copyWith({
     String? sessionId,
@@ -91,6 +111,7 @@ class AgentState extends Equatable {
     String? errorMessage,
     Map<String, TaskInfo>? tasks,
     String? currentContextId,
+    Map<int, String>? messageContextMap,
   }) {
     return AgentState(
       sessionId: sessionId ?? this.sessionId,
@@ -99,6 +120,7 @@ class AgentState extends Equatable {
       errorMessage: errorMessage ?? this.errorMessage,
       tasks: tasks ?? this.tasks,
       currentContextId: currentContextId ?? this.currentContextId,
+      messageContextMap: messageContextMap ?? this.messageContextMap,
     );
   }
 
@@ -110,5 +132,6 @@ class AgentState extends Equatable {
         errorMessage,
         tasks,
         currentContextId,
+        messageContextMap,
       ];
 }

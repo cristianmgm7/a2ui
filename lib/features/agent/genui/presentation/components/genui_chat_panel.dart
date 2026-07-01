@@ -84,9 +84,11 @@ class GenUiChatPanel extends StatelessWidget {
   ///   AI: "Report generated!" (optional - task may complete without message)
   ///
   /// Order (reversed for ListView):
-  /// - Task bubbles (shown after most recent message)
-  /// - AI message (if exists)
+  /// - Each message has its associated task bubbles displayed after it
+  /// - Tasks persist across the entire conversation history
+  /// - Active tasks from current context appear immediately
   /// - User message
+  /// - Tasks for that message (if any)
   /// - Previous messages...
   List<Widget> _buildChatItems(AgentState state) {
     final items = <Widget>[];
@@ -94,33 +96,47 @@ class GenUiChatPanel extends StatelessWidget {
     // Reverse messages for display (newest at bottom visually)
     final reversedMessages = state.messages.reversed.toList();
 
-    // Get current context tasks
-    final contextTasks = state.currentContextTasks;
-
-    // Track if we've added the task bubbles
-    bool taskBubblesAdded = false;
+    // Track which contexts we've already displayed
+    final displayedContexts = <String>{};
 
     for (var i = 0; i < reversedMessages.length; i++) {
       final message = reversedMessages[i];
 
+      // Calculate the original index (before reversing)
+      final originalIndex = state.messages.length - 1 - i;
+
       // Add regular message bubble
       items.add(GenUiMessageBubble(message: message));
 
-      // Show task bubbles after the most recent message if:
-      // 1. We haven't added them yet
-      // 2. We have tasks for this context
-      // 3. This is the most recent message (i == 0)
-      if (!taskBubblesAdded && i == 0 && contextTasks.isNotEmpty) {
-        // Add all task bubbles for this context (in chronological order)
-        for (final task in contextTasks) {
-          items.add(TaskBubble(task: task));
+      // For the most recent message (i == 0), show current context tasks
+      // even if not yet mapped (for immediate reactivity)
+      if (i == 0 && state.currentContextId != null) {
+        final currentTasks = state.currentContextTasks;
+        if (currentTasks.isNotEmpty) {
+          for (final task in currentTasks) {
+            items.add(TaskBubble(task: task));
+          }
+          displayedContexts.add(state.currentContextId!);
         }
-        taskBubblesAdded = true;
+      } else {
+        // For older messages, check if this message has associated tasks
+        final contextId = state.messageContextMap[originalIndex];
+        if (contextId != null && !displayedContexts.contains(contextId)) {
+          final messageTasks = state.getTasksForContext(contextId);
+
+          // Add all task bubbles for this message's context
+          for (final task in messageTasks) {
+            items.add(TaskBubble(task: task));
+          }
+          displayedContexts.add(contextId);
+        }
       }
     }
 
     // If we have tasks but no messages yet (edge case)
-    if (state.messages.isEmpty && contextTasks.isNotEmpty) {
+    // This can happen if tasks are created before the first message completes
+    if (state.messages.isEmpty && state.currentContextId != null) {
+      final contextTasks = state.currentContextTasks;
       for (final task in contextTasks) {
         items.add(TaskBubble(task: task));
       }

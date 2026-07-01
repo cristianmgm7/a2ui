@@ -181,10 +181,29 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
 
     updatedTasks[taskId] = taskInfo;
 
+    // Associate this context with the most recent user message
+    // Find the last user message index
+    final updatedMessageContextMap = Map<int, String>.from(state.messageContextMap);
+    final userMessageIndex = _findLastUserMessageIndex(state.messages);
+    if (userMessageIndex != -1) {
+      updatedMessageContextMap[userMessageIndex] = contextId;
+    }
+
     emit(state.copyWith(
       tasks: updatedTasks,
       currentContextId: contextId,
+      messageContextMap: updatedMessageContextMap,
     ));
+  }
+
+  /// Finds the index of the most recent user message
+  int _findLastUserMessageIndex(List<ChatMessage> messages) {
+    for (int i = messages.length - 1; i >= 0; i--) {
+      if (messages[i] is UserMessage) {
+        return i;
+      }
+    }
+    return -1;
   }
 
   /// Handles TaskStatusUpdateEvent for task lifecycle changes.
@@ -246,6 +265,11 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
   }
 
   /// Handles TaskArtifactUpdateEvent for artifact generation.
+  ///
+  /// IMPORTANT: When artifacts are generated, if they contain text content,
+  /// we should also create an agent message in the conversation.
+  /// The A2A framework often treats artifacts as the final answer without
+  /// sending a separate A2AMessage event.
   void _handleArtifactUpdate(
     a2a.A2ATaskArtifactUpdateEvent event,
     Emitter<AgentState> emit,
@@ -272,23 +296,28 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
       (a) => a.artifactId == artifact.artifactId,
     );
 
+    a2a.A2AArtifact finalArtifact;
     if (event.append == true && existingIndex != -1) {
       // Append to existing artifact
       final existing = updatedArtifacts[existingIndex];
       final mergedParts = [...existing.parts, ...artifact.parts];
 
-      updatedArtifacts[existingIndex] = a2a.A2AArtifact()
+      finalArtifact = a2a.A2AArtifact()
         ..artifactId = artifact.artifactId
         ..name = artifact.name ?? existing.name
         ..description = artifact.description ?? existing.description
         ..parts = mergedParts
         ..metadata = artifact.metadata ?? existing.metadata
         ..extensions = artifact.extensions ?? existing.extensions;
+
+      updatedArtifacts[existingIndex] = finalArtifact;
     } else if (existingIndex != -1) {
       // Replace existing artifact
+      finalArtifact = artifact;
       updatedArtifacts[existingIndex] = artifact;
     } else {
       // Add new artifact
+      finalArtifact = artifact;
       updatedArtifacts.add(artifact);
     }
 
@@ -300,10 +329,46 @@ class AgentBloc extends Bloc<AgentEvent, AgentState> {
 
     updatedTasks[taskId] = taskInfo;
 
+    // Extract text from artifact and add as conversation message if this is the last chunk
+    // This handles cases where the agent sends artifacts as the final answer
+    if (event.lastChunk == true) {
+      final artifactText = _extractTextFromArtifact(finalArtifact);
+
+      if (artifactText.isNotEmpty) {
+        // Add artifact text as agent message to conversation
+        final currentMessages = state.messages;
+        final updatedMessages = _updateOrAddStreamingMessage(
+          currentMessages,
+          artifactText,
+        );
+
+        emit(state.copyWith(
+          tasks: updatedTasks,
+          currentContextId: contextId,
+          messages: updatedMessages,
+          status: ConnectionStatus.initial,
+        ));
+        return;
+      }
+    }
+
     emit(state.copyWith(
       tasks: updatedTasks,
       currentContextId: contextId,
     ));
+  }
+
+  /// Extracts text content from an artifact's parts.
+  String _extractTextFromArtifact(a2a.A2AArtifact artifact) {
+    final buffer = StringBuffer();
+
+    for (final part in artifact.parts) {
+      if (part is a2a.A2ATextPart) {
+        buffer.write(part.text);
+      }
+    }
+
+    return buffer.toString().trim();
   }
 
   /// Handles direct Message responses from the agent.
